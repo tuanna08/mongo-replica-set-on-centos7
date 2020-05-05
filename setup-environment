@@ -1,0 +1,3 @@
+export MG_NODE01=mg-node01
+export MG_NODE02=mg-node02
+export MG_NODE03=mg-node03
