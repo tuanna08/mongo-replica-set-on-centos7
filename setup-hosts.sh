@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "Create bt Openstack!"
+echo "Create by Openstack!"
 
 
 echo "10.19.3.2  mg-node01" >> /etc/hosts
