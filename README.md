@@ -14,51 +14,29 @@
 +-----------------------+   +-----------+-----------+   +-----------------------+
 
 ```
-### b1: disable selinux
+### Step 1 - Disable selinux
 
+- Change value 'enforcing' to 'disabled'.
 ```
 # vim /etc/sysconfig/selinux
 ```
-
-- Change value 'enforcing' to 'disabled'.
+- find and repalce
 ```
 SELINUX=disabled
 ```
 
 - Save and exit, then reboot the servers.
-
 ```
 # reboot
 ```
-### Step 3 - Configure Firewalld
-In the first step, we already disabled SELinux. For security reasons, we will now enable firewalld on all nodes and open only the ports that are used by MongoDB and SSH.
-
-Install Firewalld with the yum command.
-```
-# yum -y install firewalld
-
-``` 
-
-Start firewalld and enable it to start at boot time.
-```
-# systemctl start firewalld
-# systemctl enable firewalld
-```
-Next, open your ssh port and the MongoDB default port 27017.
-```
-# firewall-cmd --permanent --add-port=22/tcp
-# firewall-cmd --permanent --add-port=27017/tcp
-# firewall-cmd --reload
-```
 - Check the SELinux status with the command.
-
 ```
 # sestatus
 ```
 
-### setup mongodb
+### Step 2 - setup mongodb
 
-- B1: ADD VERSION
+- B1: Configure the package management system (yum)
 ```
 # cat <<'EOF' >> /etc/yum.repos.d/mongodb-org-4.2.repo
 [mongodb-org-4.2]
@@ -70,20 +48,38 @@ gpgkey=https://www.mongodb.org/static/pgp/server-4.2.asc
 EOF
 ```
 
-- B2: INSTALL MONGODB
-
+- B2: Install mongodb
 ```
 # yum install -y mongodb-org
 ```
 
+### Step 3 - Configure Firewalld
+In the first step, we already disabled SELinux. For security reasons, we will now enable firewalld on all nodes and open only the ports that are used by MongoDB and SSH.
+
+- b1: Install Firewalld with the yum command.
 ```
-# vi /etc/mongod.conf
+# yum -y install firewalld
+```
+Start firewalld and enable it to start at boot time.
+```
+# systemctl start firewalld
+# systemctl enable firewalld
+```
+Next, open your ssh port and the MongoDB default port 27017.
+```
+# firewall-cmd --permanent --add-port=22/tcp
+# firewall-cmd --permanent --add-port=27017/tcp
+# firewall-cmd --reload
 ```
 
-  + edit
-  
+### Step 4 - Config replica set
+
+- b1: Edit ip listening and add config
+
+
 ```
-# network interfaces
+# vi /etc/mongod.conf
+
 net:
   port: 27017
   bindIp: 0.0.0.0  # Enter 0.0.0.0,:: to bind to all IPv4 and IPv6 addresses or, alternatively, use the net.bindIpAll setting.
@@ -92,11 +88,98 @@ operationProfiling:
   mode: "slowOp"
   slowOpThresholdMs: 50
 
-#security:
-#  authorization: enabled
-#  keyFile: /var/lib/mongodb-pki/keyfile
-
 replication:
   replSetName: demo-replica-set
+```
+
+- and restart
+
+```
+$ sudo systemctl enable mongod
+$ sudo systemctl restart mongod
+```
+- Verify that the port is listening:
+
+```
+root@node03:~# sudo netstat -tulpn | grep 27017
+tcp        0      0 0.0.0.0:27017           0.0.0.0:*               LISTEN      3255/mongod
+```
+
+- b2:  Initialize the MongoDB Replica Set
+When mongodb starts for the first time it allows an exception that you can logon without authentication to create the root account, but only on localhost. The exception is only valid until you create the user:
+```
+root@node01:~# mongo --host 127.0.0.1 --port 27017
+MongoDB shell version v4.0.14
+connecting to: mongodb://127.0.0.1:27017/?gssapiServiceName=mongodb
+Implicit session: session { "id" : UUID("1a91c1e2-e484-4734-8296-54c92ce6a5e1") }
+MongoDB server version: 4.0.14
+Welcome to the MongoDB shell.
+For interactive help, type "help".
+For more comprehensive documentation, see
+	http://docs.mongodb.org/
+Questions? Try the support group
+	http://groups.google.com/group/mongodb-user
+>
+```
+
+- Switch to the admin database and initialize the mongodb replicaset:
+```
+> use admin
+switched to db admin
+> rs.initiate()
+{
+    "info2" : "no configuration specified. Using a default configuration for the set",
+    "me" : "node01:27017",
+    "ok" : 1
+}
+```
+
+- Now that we have initialized our replicaset config, create the admin user and apply the admin role:
+```
+admin = db.getSiblingDB("admin")
+admin.createUser(
+  {
+    user: "fred",
+    pwd: passwordPrompt(), // or cleartext password
+    roles: [ { role: "userAdminAnyDatabase", db: "admin" } ]
+  }
+)
+```
+- Authenticate as the user administrator
+```
+db.getSiblingDB("admin").auth("fred", passwordPrompt()) // or cleartext password
+```
+
+- Create the cluster administrator.
+```
+db.getSiblingDB("admin").createUser(
+  {
+    "user" : "ravi",
+    "pwd" : passwordPrompt(),     // or cleartext password
+    roles: [ { "role" : "clusterAdmin", "db" : "admin" } ]
+  }
+)
+```
+- login mongo node
+```
+# mongo --host demo-replica-set/node01:27017 --username ravi --password 123456abcA --authenticationDatabase admin
+```
+
+- add member node
+
+```
+demo-replica-set:PRIMARY>
+demo-replica-set:PRIMARY> rs.add("node02:27017")
+{
+        "ok" : 1,
+        "$clusterTime" : {
+                "clusterTime" : Timestamp(1588761944, 1),
+                "signature" : {
+                        "hash" : BinData(0,"AAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+                        "keyId" : NumberLong(0)
+                }
+        },
+        "operationTime" : Timestamp(1588761944, 1)
+}
 
 ```
