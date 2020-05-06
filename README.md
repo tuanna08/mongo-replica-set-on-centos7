@@ -2,9 +2,9 @@
 ```
 ------------+---------------------------+---------------------------+------------
             |                           |                           |
-        eth0|10.19.3.2/24           eth0|10.19.3.3/24            eth0|10.19.3.4/24
+        eth0|10.19.3.2/24           eth0|10.19.3.3/24           eth0|10.19.3.4/24
 +-----------+-----------+   +-----------+-----------+   +-----------+-----------+
-|    [ node01 ]         |   |       [ node02 ]      |   |      [ node03 ]       |
+|    [ NoSQL01 ]        |   |       [ NoSQL01 ]     |   |      [ NoSQL01 ]      |
 |                       |   |                       |   |                       |
 |  mongodb              |   |      mongodb          |   |        mongodb        |
 |  mongo-exporter       |   |      mongo-exporter   |   |      mongo-exporter   |
@@ -12,6 +12,7 @@
 |                       |   |                       |   |                       |
 |                       |   |                       |   |                       |
 +-----------------------+   +-----------+-----------+   +-----------------------+
+
 
 ```
 ### Step 1 - Disable selinux
@@ -35,8 +36,15 @@ SELINUX=disabled
 ```
 
 ### Step 2 - setup mongodb
+- B1: edit hosts
+```
+# vi /etc/hosts
+10.19.3.2       NoSQL01.local NoSQL01
+10.19.3.3       NoSQL02.local NoSQL02
+10.19.3.4       NoSQL03.local NoSQL03
+```
 
-- B1: Configure the package management system (yum)
+- B2: Configure the package management system (yum)
 ```
 # cat <<'EOF' >> /etc/yum.repos.d/mongodb-org-4.2.repo
 [mongodb-org-4.2]
@@ -48,7 +56,7 @@ gpgkey=https://www.mongodb.org/static/pgp/server-4.2.asc
 EOF
 ```
 
-- B2: Install mongodb
+- B3: Install mongodb
 ```
 # yum install -y mongodb-org
 ```
@@ -75,35 +83,34 @@ Next, open your ssh port and the MongoDB default port 27017.
 ### Step 4 - Config replica set
 
 - b1: Edit ip listening and add config
+    ```
+    # vi /etc/mongod.conf
 
+    net:
+      port: 27017
+      bindIp: 0.0.0.0  # Enter 0.0.0.0,:: to bind to all IPv4 and IPv6 addresses or, alternatively, use the net.bindIpAll setting.
 
-```
-# vi /etc/mongod.conf
+    operationProfiling:
+      mode: "slowOp"
+      slowOpThresholdMs: 50
 
-net:
-  port: 27017
-  bindIp: 0.0.0.0  # Enter 0.0.0.0,:: to bind to all IPv4 and IPv6 addresses or, alternatively, use the net.bindIpAll setting.
-
-operationProfiling:
-  mode: "slowOp"
-  slowOpThresholdMs: 50
-
-replication:
-  replSetName: demo-replica-set
-```
+    replication:
+      replSetName: demo-replica-set
+    ```
 
 - and restart
 
-```
-$ sudo systemctl enable mongod
-$ sudo systemctl restart mongod
-```
+    ```
+    $ sudo systemctl enable mongod
+    $ sudo systemctl restart mongod
+    ```
+
 - Verify that the port is listening:
 
-```
-root@node03:~# sudo netstat -tulpn | grep 27017
-tcp        0      0 0.0.0.0:27017           0.0.0.0:*               LISTEN      3255/mongod
-```
+    ```
+    root@node03:~# sudo netstat -tulpn | grep 27017
+    tcp        0      0 0.0.0.0:27017           0.0.0.0:*               LISTEN      3255/mongod
+    ```
 
 - b2:  Initialize the MongoDB Replica Set
 When mongodb starts for the first time it allows an exception that you can logon without authentication to create the root account, but only on localhost. The exception is only valid until you create the user:
@@ -132,6 +139,12 @@ switched to db admin
     "me" : "node01:27017",
     "ok" : 1
 }
+```
+- edit hostname member
+```
+> cfg = rs.conf()
+> cfg.members[0].host = "NoSQL01.local:27017"
+> rs.reconfig(cfg)
 ```
 
 - Now that we have initialized our replicaset config, create the admin user and apply the admin role:
@@ -166,20 +179,35 @@ db.getSiblingDB("admin").createUser(
 ```
 
 - add member node
+    ```
+    demo-replica-set:PRIMARY> rs.add("NoSQL02.local:27017")
+    {
+            "ok" : 1,
+            "$clusterTime" : {
+                    "clusterTime" : Timestamp(1588761944, 1),
+                    "signature" : {
+                            "hash" : BinData(0,"AAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+                            "keyId" : NumberLong(0)
+                    }
+            },
+            "operationTime" : Timestamp(1588761944, 1)
+    }
+    ```
 
-```
-demo-replica-set:PRIMARY>
-demo-replica-set:PRIMARY> rs.add("node02:27017")
-{
-        "ok" : 1,
-        "$clusterTime" : {
-                "clusterTime" : Timestamp(1588761944, 1),
-                "signature" : {
-                        "hash" : BinData(0,"AAAAAAAAAAAAAAAAAAAAAAAAAAA="),
-                        "keyId" : NumberLong(0)
-                }
-        },
-        "operationTime" : Timestamp(1588761944, 1)
-}
+- add Arbiter
 
-```
+    ```
+    demo-replica-set:PRIMARY> rs.addArb("NoSQL03.local:27017")
+    {
+            "ok" : 1,
+            "$clusterTime" : {
+                    "clusterTime" : Timestamp(1588755810, 1),
+                    "signature" : {
+                            "hash" : BinData(0,"AAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+                            "keyId" : NumberLong(0)
+                    }
+            },
+            "operationTime" : Timestamp(1588755810, 1)
+    }
+    demo-replica-set:PRIMARY>
+    ```
